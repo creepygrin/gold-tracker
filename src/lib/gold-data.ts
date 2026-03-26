@@ -122,3 +122,17 @@ export function generateMultiSourceHistory(
 }
 
 export { RANGE_CONFIG };
+
+export interface RelatedMetal {
+  name: string;
+  symbol: string;
+  price: number;
+  change: number;
+  changePct: number;
+}
+
+export const RELATED_METALS: RelatedMetal[] = [
+  { name: "Silver", symbol: "XAG/USD", price: 33.42, change: 0.18, changePct: 0.54 },
+  { name: "Platinum", symbol: "XPT/USD", price: 981.5, change: -4.2, changePct: -0.43 },
+  { name: "Palladium", symbol: "XPD/USD", price: 1024.0, change: 12.3, changePct: 1.21 },
+];

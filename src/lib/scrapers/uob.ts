@@ -1,4 +1,5 @@
-import { chromium } from "playwright";
+// UOB publishes gold prices via a JSON endpoint loaded by their rates page.
+// No browser automation needed — plain fetch works fine.
 
 export interface UOBGoldPrice {
   source: "UOB";
@@ -11,8 +12,15 @@ export interface UOBGoldPrice {
   error?: string;
 }
 
-const UOB_URL =
-  "https://www.uobgroup.com/online-rates/gold-and-silver-prices.page";
+const API_URL = "https://www.uobgroup.com/wsm/gold-silver";
+
+interface UOBEntry {
+  description: string;
+  unit: string;
+  bankSell: string;
+  bankBuy: string;
+  currency: string;
+}
 
 function parsePrice(raw: string): number {
   return parseFloat(raw.replace(/[^0-9.]/g, ""));
@@ -24,71 +32,51 @@ function perGramTo100g(perGram: number): number {
 
 export async function scrapeUOB(): Promise<UOBGoldPrice> {
   const fetchedAt = new Date().toISOString();
-  let browser;
 
   try {
-    browser = await chromium.launch({ headless: true });
-    const page = await browser.newPage();
-
-    await page.goto(UOB_URL, { waitUntil: "networkidle", timeout: 30_000 });
-
-    // Wait for the price table to be populated with actual data
-    await page.waitForFunction(
-      () => {
-        const rows = document.querySelectorAll("table tbody tr");
-        return rows.length > 0 && rows[0].querySelector("td")?.textContent?.trim() !== "";
+    const res = await fetch(API_URL, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (compatible; GoldTracker/1.0)",
+        Referer: "https://www.uobgroup.com/online-rates/gold-and-silver-prices.page",
       },
-      { timeout: 20_000 }
-    );
-
-    // Extract all table rows
-    const rows = await page.evaluate(() => {
-      const result: Array<{ description: string; unit: string; bankSells: string; bankBuys: string }> = [];
-      document.querySelectorAll("table tbody tr").forEach((row) => {
-        const cells = row.querySelectorAll("td");
-        if (cells.length >= 4) {
-          result.push({
-            description: cells[0].textContent?.trim() ?? "",
-            unit: cells[1].textContent?.trim() ?? "",
-            bankSells: cells[2].textContent?.trim() ?? "",
-            bankBuys: cells[3].textContent?.trim() ?? "",
-          });
-        }
-      });
-      return result;
+      next: { revalidate: 0 },
     });
 
-    if (!rows.length) throw new Error("UOB price table rendered but no rows found");
+    if (!res.ok) throw new Error(`UOB API returned HTTP ${res.status}`);
 
-    // Priority 1: 100 GM unit row (e.g. "ARGOR CAST BAR" / "PAMP GOLD BARS" in 100 GM)
-    let target = rows.find((r) =>
-      /100\s*gm/i.test(r.unit) || /100\s*g\b/i.test(r.unit)
+    const data = await res.json();
+    const entries: UOBEntry[] = data?.types ?? [];
+
+    if (!entries.length) throw new Error("UOB API returned no entries");
+
+    // Filter to SGD gold entries only (exclude silver passbook)
+    const goldEntries = entries.filter(
+      (e) => e.currency === "SGD" && !/silver/i.test(e.description)
     );
 
+    // Priority 1: 100 GM bar
+    let target = goldEntries.find((e) => /100\s*gm?/i.test(e.unit));
+
     // Priority 2: Gold Savings Account (per gram) — multiply ×100
-    if (!target) {
-      target = rows.find((r) => /gold savings/i.test(r.description));
-    }
+    if (!target) target = goldEntries.find((e) => /gsa/i.test(e.description));
 
-    // Priority 3: any gold row
-    if (!target) {
-      target = rows.find((r) => /gold/i.test(r.description));
-    }
+    // Priority 3: any gold entry
+    if (!target) target = goldEntries[0];
 
-    if (!target) throw new Error(`No gold row found. Rows: ${rows.map((r) => r.description).join(", ")}`);
+    if (!target) throw new Error("No gold entry found in UOB API response");
 
-    const rawSells = parsePrice(target.bankSells);
-    const rawBuys = parsePrice(target.bankBuys);
+    const rawSell = parsePrice(target.bankSell);
+    const rawBuy = parsePrice(target.bankBuy);
 
-    if (!rawSells || !rawBuys) {
-      throw new Error(`Could not parse prices from "${target.description}" (${target.unit}): sells="${target.bankSells}" buys="${target.bankBuys}"`);
+    if (!rawSell || !rawBuy) {
+      throw new Error(`Could not parse prices: sell="${target.bankSell}" buy="${target.bankBuy}"`);
     }
 
     const is100g = /100\s*gm?/i.test(target.unit);
     const isPerGram = /^1\s*gm?$/i.test(target.unit);
 
-    const sellsPer100g = is100g ? rawSells : isPerGram ? perGramTo100g(rawSells) : rawSells;
-    const buysPer100g = is100g ? rawBuys : isPerGram ? perGramTo100g(rawBuys) : rawBuys;
+    const sellsPer100g = is100g ? rawSell : isPerGram ? perGramTo100g(rawSell) : rawSell;
+    const buysPer100g = is100g ? rawBuy : isPerGram ? perGramTo100g(rawBuy) : rawBuy;
 
     return {
       source: "UOB",
@@ -113,7 +101,5 @@ export async function scrapeUOB(): Promise<UOBGoldPrice> {
       fetchedAt,
       error: err instanceof Error ? err.message : String(err),
     };
-  } finally {
-    await browser?.close();
   }
 }

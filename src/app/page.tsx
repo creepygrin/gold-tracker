@@ -5,6 +5,7 @@ import { motion } from "motion/react";
 import { PriceChart } from "@/components/price-chart";
 import { StatCard } from "@/components/stat-card";
 import { GoldNews } from "@/components/gold-news";
+import { BuySignal } from "@/components/buy-signal";
 import { useTheme } from "@/components/theme-provider";
 import { cn } from "@/lib/utils";
 import {
@@ -294,6 +295,11 @@ export default function GoldDashboard() {
             </button>
           </div>
         </header>
+
+        {/* Buy Signal — first section */}
+        <div className="mb-6">
+          <BuySignal prices={prices} />
+        </div>
 
         {/* Hero — best buy price */}
         <motion.div
